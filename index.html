@@ -556,6 +556,16 @@
           </svg>
           导出
         </button>
+        <button class="btn secondary" id="calendarButton" type="button" title="导出手机日历文件">
+          <svg class="icon" viewBox="0 0 24 24">
+            <path d="M8 2v4"></path>
+            <path d="M16 2v4"></path>
+            <path d="M3 10h18"></path>
+            <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+            <path d="M9 16l2 2 4-5"></path>
+          </svg>
+          导出日历
+        </button>
       </div>
     </header>
 
@@ -692,6 +702,7 @@
       filter: document.querySelector("#filterSelect"),
       notify: document.querySelector("#notifyButton"),
       export: document.querySelector("#exportButton"),
+      calendar: document.querySelector("#calendarButton"),
       clear: document.querySelector("#clearButton"),
       toast: document.querySelector("#toast"),
       toastTitle: document.querySelector("#toastTitle"),
@@ -787,13 +798,18 @@
         record.dayBefore ? "是" : "否",
       ]);
       const csv = [header, ...rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
-      const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "birthday-reminders.csv";
-      link.click();
-      URL.revokeObjectURL(url);
+      downloadFile("\ufeff" + csv, "birthday-reminders.csv", "text/csv;charset=utf-8");
+    });
+
+    els.calendar.addEventListener("click", () => {
+      if (!records.length) {
+        showToast("还没有记录", "添加或导入生日后再导出日历。");
+        return;
+      }
+
+      const ics = buildCalendar(records);
+      downloadFile(ics, "birthday-reminders.ics", "text/calendar;charset=utf-8");
+      showToast("日历已导出", "把 .ics 文件发送到手机并打开，就可以导入系统日历。");
     });
 
     els.clear.addEventListener("click", () => {
@@ -1180,6 +1196,85 @@
 
     function saveRecords() {
       localStorage.setItem(storageKey, JSON.stringify(records));
+    }
+
+    function buildCalendar(items) {
+      const now = toIcsDateTime(new Date());
+      const lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Birthday Reminder//CN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "X-WR-CALNAME:生日提醒",
+      ];
+
+      items.forEach((record) => {
+        const start = new Date(`${record.birthday}T00:00:00`);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 1);
+        const uid = `${record.id || `${record.name}-${record.birthday}`}@birthday-reminder.local`;
+        const trigger = record.dayBefore ? "-P1D" : "PT0S";
+        const alarmText = record.dayBefore
+          ? `${record.name} 明天过生日`
+          : `${record.name} 今天过生日`;
+
+        lines.push(
+          "BEGIN:VEVENT",
+          `UID:${escapeIcs(uid)}`,
+          `DTSTAMP:${now}`,
+          `DTSTART;VALUE=DATE:${toIcsDate(start)}`,
+          `DTEND;VALUE=DATE:${toIcsDate(end)}`,
+          "RRULE:FREQ=YEARLY",
+          `SUMMARY:${escapeIcs(`${record.name} 生日`)}`,
+          `DESCRIPTION:${escapeIcs(record.note || "生日提醒")}`,
+          "TRANSP:TRANSPARENT",
+          "BEGIN:VALARM",
+          "ACTION:DISPLAY",
+          `DESCRIPTION:${escapeIcs(alarmText)}`,
+          `TRIGGER;RELATED=START:${trigger}`,
+          "END:VALARM",
+          "END:VEVENT",
+        );
+      });
+
+      lines.push("END:VCALENDAR");
+      return `${lines.join("\r\n")}\r\n`;
+    }
+
+    function toIcsDate(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}${month}${day}`;
+    }
+
+    function toIcsDateTime(date) {
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(date.getUTCDate()).padStart(2, "0");
+      const hours = String(date.getUTCHours()).padStart(2, "0");
+      const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+      const seconds = String(date.getUTCSeconds()).padStart(2, "0");
+      return `${year}${month}${day}T${hours}${minutes}${seconds}Z`;
+    }
+
+    function escapeIcs(value) {
+      return String(value ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/\n/g, "\\n")
+        .replace(/,/g, "\\,")
+        .replace(/;/g, "\\;");
+    }
+
+    function downloadFile(content, filename, type) {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
     }
 
     function escapeCsv(value) {
